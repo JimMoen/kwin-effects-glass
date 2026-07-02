@@ -44,6 +44,13 @@ struct BlurRenderData
     /// contains not blurred background behind the window, it's cached.
     std::vector<std::unique_ptr<GLTexture>> textures;
     std::vector<std::unique_ptr<GLFramebuffer>> framebuffers;
+
+    /// True once framebuffers[1] holds a valid blurred result. During a
+    /// whole-screen transform (e.g. desktop switch slide) the window and the
+    /// background behind it move together as a rigid unit, so the cached blur
+    /// stays valid and only needs re-compositing with the current transform -
+    /// letting us skip the expensive per-frame blit + Dual Kawase passes.
+    bool hasBlur = false;
 };
 
 struct BlurEffectData
@@ -90,6 +97,10 @@ public:
     void reconfigure(ReconfigureFlags flags) override;
 #ifdef GLASS_KWIN_67
     void prePaintScreen(ScreenPrePaintData &data) override;
+
+#ifndef GLASS_X11
+    void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
+#endif
 
 #ifdef GLASS_X11
     void prePaintWindow(EffectWindow *w, WindowPrePaintData &data) override;
@@ -223,6 +234,7 @@ private:
     BlurRegion m_paintedDeviceArea; // keeps track of all painted areas (from bottom to top)
     BlurRegion m_currentDeviceBlur; // keeps track of currently blurred area of the windows (from bottom to top)
     BlurOutput *m_currentOutput = nullptr;
+    bool m_screenTransformed = false; // whole screen painted transformed this frame (e.g. desktop switch slide)
 
     QMatrix4x4 m_colorMatrix;
     int m_expandSize;

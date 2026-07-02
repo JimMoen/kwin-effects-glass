@@ -895,6 +895,17 @@ void BlurEffect::prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseco
 #endif
 }
 
+#if defined(GLASS_KWIN_67) && !defined(GLASS_X11)
+void BlurEffect::paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen)
+{
+    // A whole-screen transform (desktop switch slide, cube, desktop grid, ...) moves the
+    // window and the background behind it together, so the cached blur stays valid. Remember
+    // it here so blur() can reuse the cache instead of recomputing every animation frame.
+    m_screenTransformed = mask & PAINT_SCREEN_TRANSFORMED;
+    effects->paintScreen(renderTarget, viewport, mask, deviceRegion, screen);
+}
+#endif
+
 #ifdef GLASS_X11
 #ifdef GLASS_KWIN_67
 void BlurEffect::prePaintWindow(EffectWindow *w, WindowPrePaintData &data)
@@ -1199,6 +1210,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     if (renderInfo.framebuffers.size() != (m_maxIterationCount + 1) || renderInfo.textures[0]->size() != backgroundRect.size() || renderInfo.textures[0]->internalFormat() != textureFormat) {
         renderInfo.framebuffers.clear();
         renderInfo.textures.clear();
+        renderInfo.hasBlur = false;
 
         glClearColor(0, 0, 0, 0);
         for (size_t i = 0; i <= m_maxIterationCount; ++i) {
@@ -1229,7 +1241,14 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         }
     }
 
+    // During a whole-screen transform (e.g. desktop switch slide) reuse the cached blur:
+    // the background behind the window moves together with it, so skip the expensive
+    // per-frame background blit + Dual Kawase passes and only re-composite with the
+    // current (animated) transform below.
+    const bool reuseCache = m_screenTransformed && renderInfo.hasBlur;
+
     // Fetch the pixels behind the shape that is going to be blurred.
+    if (!reuseCache) {
 #ifdef GLASS_X11
     const QRegion dirtyRegion = deviceRegion & backgroundRect;
     for (const QRect &dirtyRect : dirtyRegion) {
@@ -1241,6 +1260,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
     }
 #endif
+    }
 
     // Upload the geometry: the first 6 vertices are used when downsampling and upsampling offscreen,
     // the remaining vertices are used when rendering on the screen.
@@ -1532,7 +1552,9 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     const float contentTintStrength = tintStrengthForRegion(contentShape.isEmpty() && !frameShape.isEmpty());
     const float frameTintStrength = tintStrengthForRegion(true);
 
-    GLTexture *contentBlurredTexture = runBlurPass(splitBlurSettings ? contentBlurSettings : combinedBlurSettings);
+    GLTexture *cachedBlurredTexture = renderInfo.framebuffers[1]->colorAttachment();
+    GLTexture *contentBlurredTexture = reuseCache ? cachedBlurredTexture : runBlurPass(splitBlurSettings ? contentBlurSettings : combinedBlurSettings);
+    renderInfo.hasBlur = true;
     m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.tintStrengthLocation, contentTintStrength);
     drawBlurredRegion(contentBlurredTexture,
                       6,
@@ -1540,7 +1562,7 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
                       splitBlurSettings ? contentBlurSettings.offset : combinedBlurSettings.offset);
 
     if (splitRenderRegions && frameVertexCount > 0) {
-        GLTexture *frameBlurredTexture = splitBlurSettings ? runBlurPass(m_decorationBlurSettings) : contentBlurredTexture;
+        GLTexture *frameBlurredTexture = reuseCache ? cachedBlurredTexture : (splitBlurSettings ? runBlurPass(m_decorationBlurSettings) : contentBlurredTexture);
         m_roundedOnscreenPass.shader->setUniform(m_roundedOnscreenPass.tintStrengthLocation, frameTintStrength);
         drawBlurredRegion(frameBlurredTexture,
                           6 + contentVertexCount,
