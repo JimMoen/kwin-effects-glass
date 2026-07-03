@@ -22,8 +22,10 @@ void main(void)
     vec2 position = uv * blurSize - halfBlurSize.xy;
     float dist = roundedRectangleDist(position, halfBlurSize, cornerRadius);
 
+    // The 8-tap upsample is only consumed by glass() when refraction is disabled;
+    // with refraction on, glass() samples texUnit directly, so skip it entirely.
     vec4 sum = vec4(0);
-    if (dist <= 0.0) {
+    if (dist <= 0.0 && refractionStrength <= 0.0) {
         sum = texture(texUnit, uv + vec2(-halfpixel.x * 2.0, 0.0) * offset);
         sum += texture(texUnit, uv + vec2(-halfpixel.x, halfpixel.y) * offset) * 2.0;
         sum += texture(texUnit, uv + vec2(0.0, halfpixel.y * 2.0) * offset);

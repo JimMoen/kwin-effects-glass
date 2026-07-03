@@ -143,16 +143,23 @@ vec4 glass(vec4 sum, vec4 cornerRadius)
     float concaveFactor = 1.0 - sqrt(1.0 - pow(smoothstep(0.0, 1.0, edgeFactor), refractionNormalPow));
 
     GlassFragment s;
-    if (refractionStrength > 0.0) {
+    // Refraction bends light only inside the concave edge band. Across the whole
+    // interior concaveFactor is ~0, so the offset is sub-pixel and the result is a
+    // plain unshifted tap - skip the per-pixel gradient/refract/normalize there.
+    if (refractionStrength > 0.0 && concaveFactor > 0.004) {
         vec4 r = clamp(cornerRadius * 2.0, min(64.0, minHalfSize), min(128.0, minHalfSize));
         s = physicallyBasedRefraction == 0
             ? glassRefraction(position, halfBlurSize, r, dist, edgeFactor, concaveFactor)
             : snellsRefraction(position, halfBlurSize, r, minHalfSize, dist, edgeFactor, concaveFactor);
+    } else if (refractionStrength > 0.0) {
+        s = GlassFragment(texture(texUnit, uv), dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
     } else {
         s = GlassFragment(sum, dist, edgeFactor, concaveFactor, vec3(0.0, 0.0, 1.0), 1.0);
     }
 
-    vec3 rgb = s.concaveFactor < 1.0 ? glassOutline(position, s) : s.color.rgb;
+    // Outline/edge lighting only contributes within the concave band; interior is a no-op.
+    vec3 rgb = (s.concaveFactor > 0.004 && s.concaveFactor < 1.0) ? glassOutline(position, s) : s.color.rgb;
     vec3 tinted = mix(rgb, tintColor, adjustedTintStrength(tintStrength, rgb));
-    return roundedRectangle(uv * blurSize, tinted, cornerRadius);
+    // dist < 0 is guaranteed here (early return above), so the rounded-rect alpha is 1.
+    return vec4(tinted, 1.0);
 }
