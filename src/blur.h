@@ -95,6 +95,7 @@ public:
     void prePaintWindow(EffectWindow *w, WindowPrePaintData &data) override;
 #else
     void prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePaintData &data) override;
+    void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
 #endif
 #else
     void prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseconds presentTime) override;
@@ -230,6 +231,7 @@ private:
     float m_upsampleOffset = 1.0f;
     size_t m_maxIterationCount = 1; // number of times the texture will be downsized to half size
     int m_blurDownscale = 2; // extra base-resolution divisor for the offscreen blur pyramid (KWIN_GLASS_BLUR_DOWNSCALE, 1..4)
+    bool m_screenTransformed = false; // set per frame in paintScreen when PAINT_SCREEN_TRANSFORMED (desktop switch / cube / overview)
     BlurPipelineSettings m_contentBlurSettings{};
     BlurPipelineSettings m_decorationBlurSettings{};
     BlurPipelineSettings m_dockBlurSettings{};

@@ -1058,14 +1058,24 @@
            </item>
            <item>
             <widget class="QCheckBox" name="kcfg_PhysicallyBasedRefraction">
-             <property name="text">
-              <string>Physically based refraction</string>
-             </property>
-             <property name="toolTip">
-              <string>Use a Snell's-law (IOR-based) refraction model instead. The Refraction Strength slider is reinterpreted as the index-of-refraction delta in this mode.</string>
-             </property>
-            </widget>
-           </item>
+              <property name="text">
+               <string>Physically based refraction</string>
+              </property>
+              <property name="toolTip">
+               <string>Use a Snell's-law (IOR-based) refraction model instead. The Refraction Strength slider is reinterpreted as the index-of-refraction delta in this mode.</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="kcfg_PauseBlurDuringScreenTransform">
+              <property name="text">
+               <string>Pause blur during screen transitions</string>
+              </property>
+              <property name="toolTip">
+               <string>Skip blur while a whole-screen animation is playing (desktop switch slide, cube, overview...), re-activating it once the transition settles. Reduces frame drops during desktop switching on high-resolution or multi-monitor setups, at the cost of showing windows unblurred during the animation.</string>
+              </property>
+             </widget>
+            </item>
            <item>
             <widget class="QLabel" name="labelRefractionOffsetStrength">
              <property name="enabled">

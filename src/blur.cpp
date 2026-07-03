@@ -900,6 +900,17 @@ void BlurEffect::prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseco
 #endif
 }
 
+#if defined(GLASS_KWIN_67) && !defined(GLASS_X11)
+void BlurEffect::paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen)
+{
+    // Record whether this output is being painted with a whole-screen transform this frame
+    // (desktop switch slide, cube, overview...). shouldBlur() consults it to optionally
+    // pause blur during such animations.
+    m_screenTransformed = mask & PAINT_SCREEN_TRANSFORMED;
+    effects->paintScreen(renderTarget, viewport, mask, deviceRegion, screen);
+}
+#endif
+
 #ifdef GLASS_X11
 #ifdef GLASS_KWIN_67
 void BlurEffect::prePaintWindow(EffectWindow *w, WindowPrePaintData &data)
@@ -985,6 +996,15 @@ void BlurEffect::prePaintWindow(RenderView *view, EffectWindow *w, WindowPrePain
 
 bool BlurEffect::shouldBlur(const EffectWindow *w, int mask, const WindowPaintData &data) const
 {
+    // Optional: skip blur entirely while a whole-screen transform (desktop switch slide,
+    // cube, overview...) is animating. Those frames repaint the full screen, and blurring
+    // every glass window each frame is the dominant per-frame cost; suppressing it keeps
+    // the animation cheap, with blur re-activating once the transform settles.
+    if (m_settings.general.pauseBlurDuringScreenTransform && m_screenTransformed
+        && !w->data(WindowForceBlurRole).toBool()) {
+        return false;
+    }
+
     if (effects->activeFullScreenEffect() && !w->data(WindowForceBlurRole).toBool()) {
         return false;
     }

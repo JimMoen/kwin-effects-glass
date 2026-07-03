@@ -40,6 +40,7 @@ struct GeneralSettings
     bool excludeTooltips;
     bool excludeMenus;
     bool excludeOSD;
+    bool pauseBlurDuringScreenTransform;
 };
 
 struct ForceBlurSettings
