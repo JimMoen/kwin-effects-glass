@@ -118,6 +118,10 @@ BlurEffect::BlurEffect()
     BlurConfig::instance(effects->config());
     ensureResources();
 
+    if (qEnvironmentVariableIsSet("KWIN_GLASS_BLUR_DOWNSCALE")) {
+        m_blurDownscale = std::clamp(qEnvironmentVariableIntValue("KWIN_GLASS_BLUR_DOWNSCALE"), 1, 4);
+    }
+
     m_roundedOnscreenPass.shader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture,
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.vert"),
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.frag"));
@@ -1207,14 +1211,20 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         textureFormat = renderTarget.texture()->internalFormat();
     }
 
-    if (renderInfo.framebuffers.size() != (m_maxIterationCount + 1) || renderInfo.textures[0]->size() != backgroundRect.size() || renderInfo.textures[0]->internalFormat() != textureFormat) {
+    // Base resolution of the blur pyramid: the window size reduced by m_blurDownscale (B).
+    const QSize blurBaseSize(std::max(1, backgroundRect.width() / m_blurDownscale),
+                             std::max(1, backgroundRect.height() / m_blurDownscale));
+
+    if (renderInfo.framebuffers.size() != (m_maxIterationCount + 1) || renderInfo.textures[0]->size() != blurBaseSize || renderInfo.textures[0]->internalFormat() != textureFormat) {
         renderInfo.framebuffers.clear();
         renderInfo.textures.clear();
         renderInfo.hasBlur = false;
 
         glClearColor(0, 0, 0, 0);
         for (size_t i = 0; i <= m_maxIterationCount; ++i) {
-            auto texture = GLTexture::allocate(textureFormat, backgroundRect.size() / (1 << i));
+            const QSize levelSize(std::max(1, blurBaseSize.width() / (1 << i)),
+                                  std::max(1, blurBaseSize.height() / (1 << i)));
+            auto texture = GLTexture::allocate(textureFormat, levelSize);
             if (!texture) {
                 qCWarning(KWIN_BLUR) << "Failed to allocate an offscreen texture";
                 return;
@@ -1241,24 +1251,38 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         }
     }
 
-    // During a whole-screen transform (e.g. desktop switch slide) reuse the cached blur:
-    // the background behind the window moves together with it, so skip the expensive
-    // per-frame background blit + Dual Kawase passes and only re-composite with the
-    // current (animated) transform below.
-    const bool reuseCache = m_screenTransformed && renderInfo.hasBlur;
-
-    // Fetch the pixels behind the shape that is going to be blurred.
-    if (!reuseCache) {
+    // Which part of the background behind the window actually needs re-fetching this frame.
 #ifdef GLASS_X11
-    const QRegion dirtyRegion = deviceRegion & backgroundRect;
-    for (const QRect &dirtyRect : dirtyRegion) {
-        renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
-    }
+    const QRegion backgroundDirty = deviceRegion & backgroundRect;
+    const bool backgroundUnchanged = backgroundDirty.isEmpty();
 #else
-    const Region dirtyRegion = viewport.mapFromDeviceCoordinatesContained(deviceRegion) & backgroundRect;
-    for (const Rect &dirtyRect : dirtyRegion.rects()) {
-        renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
-    }
+    const Region backgroundDirty = viewport.mapFromDeviceCoordinatesContained(deviceRegion) & backgroundRect;
+    const bool backgroundUnchanged = backgroundDirty.isEmpty();
+#endif
+
+    // Reuse the cached blur (skip the expensive background blit + Dual Kawase passes) when:
+    //  - a whole-screen transform is running (desktop switch slide): the window and the
+    //    background behind it move together, so the cached result stays valid; or
+    //  - nothing behind the window is being repainted this frame: the cache is still current.
+    const bool reuseCache = renderInfo.hasBlur && (m_screenTransformed || backgroundUnchanged);
+
+    // Fetch the pixels behind the shape that is going to be blurred. The destination is
+    // scaled down by m_blurDownscale so the hardware blit does the first downscale for free
+    // and the whole pyramid runs at reduced resolution (B).
+    if (!reuseCache) {
+        const int d = m_blurDownscale;
+#ifdef GLASS_X11
+        for (const QRect &dirtyRect : backgroundDirty) {
+            const QRect dst = dirtyRect.translated(-backgroundRect.topLeft());
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect,
+                QRect(dst.x() / d, dst.y() / d, std::max(1, dst.width() / d), std::max(1, dst.height() / d)));
+        }
+#else
+        for (const Rect &dirtyRect : backgroundDirty.rects()) {
+            const Rect dst = dirtyRect.translated(-backgroundRect.topLeft());
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect,
+                Rect(dst.x() / d, dst.y() / d, std::max(1, dst.width() / d), std::max(1, dst.height() / d)));
+        }
 #endif
     }
 

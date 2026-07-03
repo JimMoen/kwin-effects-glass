@@ -238,6 +238,12 @@ private:
 
     QMatrix4x4 m_colorMatrix;
     int m_expandSize;
+    // Compute the blur at 1/m_blurDownscale of the window resolution: the background is
+    // blitted straight into a smaller base texture (hardware downscale) and the whole
+    // Dual Kawase pyramid runs on fewer pixels, then the result is linearly upscaled during
+    // the onscreen composite. Trades a little sharpness for a big fill-rate win on large /
+    // high-DPI windows. Overridable via KWIN_GLASS_BLUR_DOWNSCALE (clamped to 1..4).
+    int m_blurDownscale = 2;
     float m_blurRadius = 1.0f;
     float m_upsampleOffset = 1.0f;
     size_t m_maxIterationCount = 1; // number of times the texture will be downsized to half size
