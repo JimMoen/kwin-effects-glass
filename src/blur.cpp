@@ -118,6 +118,11 @@ BlurEffect::BlurEffect()
     BlurConfig::instance(effects->config());
     ensureResources();
 
+    // Compute the offscreen blur pyramid at a reduced base resolution to cut fill-rate.
+    // Default 2 (half in each axis, ~4x fewer texels); override with KWIN_GLASS_BLUR_DOWNSCALE=1..4 (1 disables).
+    const int envDownscale = qEnvironmentVariableIntValue("KWIN_GLASS_BLUR_DOWNSCALE");
+    m_blurDownscale = envDownscale > 0 ? std::clamp(envDownscale, 1, 4) : 2;
+
     m_roundedOnscreenPass.shader = ShaderManager::instance()->generateShaderFromFile(ShaderTrait::MapTexture,
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.vert"),
                                                                                      QStringLiteral(":/effects/glass/generated/onscreen_rounded.frag"));
@@ -1196,13 +1201,18 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         textureFormat = renderTarget.texture()->internalFormat();
     }
 
-    if (renderInfo.framebuffers.size() != (m_maxIterationCount + 1) || renderInfo.textures[0]->size() != backgroundRect.size() || renderInfo.textures[0]->internalFormat() != textureFormat) {
+    const QSize blurBaseSize(std::max(1, backgroundRect.width() / m_blurDownscale),
+                             std::max(1, backgroundRect.height() / m_blurDownscale));
+
+    if (renderInfo.framebuffers.size() != (m_maxIterationCount + 1) || renderInfo.textures[0]->size() != blurBaseSize || renderInfo.textures[0]->internalFormat() != textureFormat) {
         renderInfo.framebuffers.clear();
         renderInfo.textures.clear();
 
         glClearColor(0, 0, 0, 0);
         for (size_t i = 0; i <= m_maxIterationCount; ++i) {
-            auto texture = GLTexture::allocate(textureFormat, backgroundRect.size() / (1 << i));
+            const QSize levelSize(std::max(1, blurBaseSize.width() / (1 << i)),
+                                  std::max(1, blurBaseSize.height() / (1 << i)));
+            auto texture = GLTexture::allocate(textureFormat, levelSize);
             if (!texture) {
                 qCWarning(KWIN_BLUR) << "Failed to allocate an offscreen texture";
                 return;
@@ -1230,15 +1240,37 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     }
 
     // Fetch the pixels behind the shape that is going to be blurred.
+    // When downscaling, blit the whole dirty bounding rect in ONE scaled blit: multiple
+    // per-rect scaled blits with integer-divided destinations produce shifting seams
+    // (a moving grid, visible at low blur). A single rect keeps the mapping consistent.
+    const int ds = m_blurDownscale;
 #ifdef GLASS_X11
     const QRegion dirtyRegion = deviceRegion & backgroundRect;
-    for (const QRect &dirtyRect : dirtyRegion) {
-        renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
+    if (ds > 1) {
+        const QRect s = dirtyRegion.boundingRect();
+        if (!s.isEmpty()) {
+            const QRect d = s.translated(-backgroundRect.topLeft());
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, s,
+                QRect(d.x() / ds, d.y() / ds, std::max(1, d.width() / ds), std::max(1, d.height() / ds)));
+        }
+    } else {
+        for (const QRect &dirtyRect : dirtyRegion) {
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
+        }
     }
 #else
     const Region dirtyRegion = viewport.mapFromDeviceCoordinatesContained(deviceRegion) & backgroundRect;
-    for (const Rect &dirtyRect : dirtyRegion.rects()) {
-        renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
+    if (ds > 1) {
+        const Rect s = dirtyRegion.boundingRect();
+        if (!s.isEmpty()) {
+            const Rect d = s.translated(-backgroundRect.topLeft());
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, s,
+                Rect(d.x() / ds, d.y() / ds, std::max(1, d.width() / ds), std::max(1, d.height() / ds)));
+        }
+    } else {
+        for (const Rect &dirtyRect : dirtyRegion.rects()) {
+            renderInfo.framebuffers[0]->blitFromRenderTarget(renderTarget, viewport, dirtyRect, dirtyRect.translated(-backgroundRect.topLeft()));
+        }
     }
 #endif
 

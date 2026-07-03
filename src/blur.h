@@ -229,6 +229,7 @@ private:
     float m_blurRadius = 1.0f;
     float m_upsampleOffset = 1.0f;
     size_t m_maxIterationCount = 1; // number of times the texture will be downsized to half size
+    int m_blurDownscale = 2; // extra base-resolution divisor for the offscreen blur pyramid (KWIN_GLASS_BLUR_DOWNSCALE, 1..4)
     BlurPipelineSettings m_contentBlurSettings{};
     BlurPipelineSettings m_decorationBlurSettings{};
     BlurPipelineSettings m_dockBlurSettings{};
